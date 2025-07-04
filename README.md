@@ -1,5 +1,7 @@
 SPINALYSIS
+
 Overview
+
 SPINALYSIS is an intelligent gait analysis system that utilizes flexible PCBs embedded with pressure sensors inside shoes to monitor foot pressure distribution and walking patterns. The system comprises:
 
 6 FlexiForce A401 sensors per shoe (12 sensors in total)
