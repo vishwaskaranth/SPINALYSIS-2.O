@@ -298,10 +298,212 @@ def init_db():
     conn.close()
 
 init_db() # Initialize the database when the application starts
+def create_patient_folder(first_name, middle_name):
+    """
+    Creates a dedicated folder for patient data (e.g., Excel files).
+    Folder name is derived from first and middle names.
+    """
+    folder_name = f"data/{first_name.lower()}_{middle_name.lower() if middle_name else ''}"
+    os.makedirs(folder_name, exist_ok=True) # Create if not exists
+    logging.debug(f'Created folder: {folder_name}')
+    return folder_name
+
+def initialize_excel(patient_id):
+    """
+    Initializes an Excel workbook for a given patient.
+    Creates separate sheets for different walk types with sensor headers.
+    """
+    conn = sqlite3.connect('spinalysis.db')
+    c = conn.cursor()
+    c.execute("SELECT first_name, last_name FROM patients WHERE patient_id = ?", (patient_id,))
+    patient = c.fetchone()
+    conn.close()
+
+    if patient:
+        folder_path = create_patient_folder(patient[0], patient[1])
+        file_name = f"{patient[0].lower()}_{patient[1].lower() if patient[1] else ''}.xlsx"
+        file_path = os.path.join(folder_path, file_name)
+
+        if not os.path.exists(file_path):
+            wb = Workbook()
+            # Remove default sheet created by Workbook()
+            if 'Sheet' in wb.sheetnames:
+                wb.remove(wb['Sheet'])
+
+            # Define sheets for different walk types and their headers
+            walk_types_sheets = ['HEEL_WALK', 'NORMAL_WALK', 'FOREFEET_WALK']
+            headers = ["Timestamp", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"]
+
+            for wt in walk_types_sheets:
+                ws = wb.create_sheet(wt)
+                ws.append(headers) # Add headers to each sheet
+
+            wb.save(file_path)
+            logging.debug(f"Initialized new Excel file for patient {patient_id} at {file_path}")
+        else:
+            logging.debug(f"Excel file already exists for patient {patient_id} at {file_path}")
+        return file_path
+    return None # Return None if patient not found
+
+# --- Socket.IO Event Handlers for Frontend Control ---
 
 
 
+@app.route('/login', methods=['POST'])
+def login():
+    """Authenticates a doctor based on username and password."""
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
 
+    conn = sqlite3.connect('spinalysis.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM doctors WHERE username = ? AND password = ?", (username, password))
+    doctor = c.fetchone()
+    conn.close()
+
+    if doctor:
+        logging.debug(f"Login successful for {username}")
+        # Return the username to the frontend to be stored in localStorage
+        return jsonify({'message': 'Login successful', 'username': username}), 200
+    else:
+        logging.warning(f"Login failed for {username}")
+        return jsonify({'message': 'Invalid credentials'}), 401
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    """Acknowledge logout from frontend; no server-side session to clear."""
+    # With localStorage-based auth, there's no server-side session to destroy.
+    # The frontend clears its localStorage.
+    return jsonify({'message': 'Logged out successfully'}), 200
+
+@app.route('/create_doctor', methods=['POST'])
+def create_doctor_account():
+    """Creates a new doctor account."""
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({'message': 'Username and password are required'}), 400
+
+    conn = sqlite3.connect('spinalysis.db')
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO doctors (username, password) VALUES (?, ?)", (username, password))
+        conn.commit()
+        logging.debug(f"Account created for {username}")
+        return jsonify({'message': 'Account created'}), 201
+    except sqlite3.IntegrityError:
+        logging.warning(f"Account creation failed: Username {username} already exists")
+        return jsonify({'message': 'Username already exists'}), 409
+    except Exception as e:
+        logging.error(f"Error creating account: {str(e)}")
+        return jsonify({'message': f'Error creating account: {str(e)}'}), 500
+    finally:
+        conn.close()
+
+@app.route('/check_patient', methods=['POST'])
+def check_patient():
+    """
+    Checks if a patient exists by first and middle name AND doctor_username.
+    Only checks patients belonging to the current doctor.
+    The doctor_username is expected in the request body.
+    """
+    data = request.json
+    first_name = data.get('first_name')
+    middle_name = data.get('middle_name')
+    doctor_username = data.get('doctor_username') # Get doctor_username from body
+
+    if not doctor_username:
+        return jsonify({'message': 'Unauthorized: Doctor username missing in request'}), 401
+    if not first_name:
+        return jsonify({'message': 'First name is required'}), 400
+
+    conn = sqlite3.connect('spinalysis.db')
+    c = conn.cursor()
+    if middle_name:
+        c.execute("SELECT hospital_number FROM patients WHERE first_name = ? AND middle_name = ? AND doctor_username = ?", (first_name, middle_name, doctor_username))
+    else:
+        c.execute("SELECT hospital_number FROM patients WHERE first_name = ? AND middle_name IS NULL AND doctor_username = ?", (first_name, doctor_username))
+    patient = c.fetchone()
+    conn.close()
+
+    if patient:
+        return jsonify({'exists': True, 'hospital_number': patient[0]}), 200
+    else:
+        return jsonify({'exists': False}), 200
+
+@app.route('/create_patient_account', methods=['POST'])
+def create_patient_account():
+    """
+    Creates a new patient record, associates it with the logged-in doctor,
+    and initializes their Excel file.
+    Doctor's username is expected in the request body.
+    """
+    data = request.json
+    first_name = data.get('first_name')
+    middle_name = data.get('middle_name')
+    last_name = data.get('last_name')
+    age = data.get('age')
+    hospital_number = data.get('hospital_number')
+    doctor_username = data.get('doctor_username') # Get doctor_username from body
+
+    if not doctor_username:
+        return jsonify({'message': 'Unauthorized: Doctor username missing in request'}), 401
+    if not all([first_name, last_name, age, hospital_number]):
+        return jsonify({'message': 'Missing required patient data'}), 400
+
+    conn = sqlite3.connect('spinalysis.db')
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO patients (first_name, middle_name, last_name, age, hospital_number, doctor_username) VALUES (?, ?, ?, ?, ?, ?)",
+                  (first_name, middle_name, last_name, age, hospital_number, doctor_username))
+        patient_id = c.lastrowid
+        conn.commit()
+        initialize_excel(patient_id) # Initialize Excel for the new patient
+        logging.debug(f"Added patient {first_name} {last_name} for doctor {doctor_username} with ID {patient_id}")
+        return jsonify({'message': 'Patient added successfully', 'patient_id': patient_id}), 201
+    except sqlite3.IntegrityError:
+        logging.warning(f"Patient creation failed: Hospital number {hospital_number} already exists.")
+        return jsonify({'message': f'Hospital number {hospital_number} already exists for another patient.'}), 409
+    except Exception as e:
+        logging.error(f"Error adding patient: {str(e)}")
+        return jsonify({'message': f'Error adding patient: {str(e)}'}), 500
+    finally:
+        conn.close()
+
+@app.route('/get_patients', methods=['POST']) # Changed to POST to receive doctor_username in body
+def get_patients_list():
+    """
+    Retrieves a list of all patients belonging to the provided doctor_username.
+    Doctor's username is expected in the request body.
+    """
+    data = request.json
+    doctor_username = data.get('doctor_username') # Get doctor_username from body
+
+    if not doctor_username:
+        return jsonify({'message': 'Unauthorized: Doctor username missing in request'}), 401
+    
+    conn = sqlite3.connect('spinalysis.db')
+    c = conn.cursor()
+    # Filter patients by the logged-in doctor's username
+    c.execute("SELECT patient_id, first_name, middle_name, last_name, age, hospital_number FROM patients WHERE doctor_username = ?", (doctor_username,))
+    patients = c.fetchall()
+    conn.close()
+
+    patients_list = []
+    for p in patients:
+        patients_list.append({
+            'patient_id': p[0],
+            'first_name': p[1],
+            'middle_name': p[2],
+            'last_name': p[3],
+            'age': p[4],
+            'hospital_number': p[5]
+        })
+    logging.debug(f"Fetched {len(patients_list)} patients for doctor {doctor_username}")
+    return jsonify(patients_list), 200
 @socketio.on('start_test_command')
 def handle_start_test_command(data):
     """

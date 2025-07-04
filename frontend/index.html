@@ -820,6 +820,1145 @@
       </div>
   </div>
 
+ <script>
+   const API_BASE_URL = 'http://127.0.0.1:8000'; // Define your Flask backend URL
 
+const socket = io(API_BASE_URL, {
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000
+});
+//
+socket.on('connect', () => {
+  console.log("✅ Socket.IO connected to backend");
+});
+
+socket.on('connect_error', (err) => {
+  console.error("❌ Socket.IO connection failed:", err);
+});
+// Listen for real-time sensor data
+socket.on('sensor_data', (data) => {
+    if (!testRunning) return;
+
+    // Define the order of pressure sensor keys from your backend data
+    const pressureSensorKeys = [
+        'left_p1', 'left_p2', 'left_p3', 'left_p4', 'left_p5', 'left_p6',
+        'right_p1', 'right_p2', 'right_p3', 'right_p4', 'right_p5', 'right_p6'
+    ];
+
+    // Update each sensor value individually
+    pressureSensorKeys.forEach((key, index) => {
+        const sensorId = `s${index + 1}_value`; // e.g., 's1_value', 's2_value'
+        const sensorElement = document.getElementById(sensorId);
+        if (sensorElement) {
+            // Get value, format to 2 decimal places, or show '-' if null/undefined
+            const value = data[key] !== undefined && data[key] !== null ? data[key].toFixed(2) : '-';
+            sensorElement.textContent = `S${index + 1}: ${value}`;
+        }
+    });
+});
+
+    let currentPatient = null;
+    let currentTestDuration = 10; // Default duration in seconds (always stored in seconds)
+    let testIntervalId = null;
+    let timeElapsed = 0;
+    let currentWalkType = ''; // e.g., 'Heel_Walk', 'Normal_Walk', 'Forefeet_Walk'
+    let currentTestId = null; // Stores the test_id from the backend for the currently running test
+    let sensorDataInterval = null; // Interval for fetching sensor data
+    let testRunning = false; // Flag to indicate if a test is running
+    
+    // Auth State: Now using localStorage for logged-in doctor's username
+    let loggedInDoctorUsername = localStorage.getItem('loggedInDoctorUsername'); 
+
+    // --- Chart instances storage ---
+    const charts = {}; // Object to store Chart.js instances
+    let currentAnalysisData = {}; // Stores the fetched analysis data for report generation
+    let savedChartImagePaths = {}; // NEW: Stores { 'Heel_Walk_left': 'filename.png', ... }
+
+    // --- DOM Element References ---
+    const splashScreen = document.getElementById('splashScreen');
+    const companyLogo = document.getElementById('companyLogo');
+    const spinner = document.querySelector('#splashScreen .spinner'); 
+    const spinalysisText = document.querySelector('#splashScreen .spinalysis-text'); 
+    const spinalysisLetters = spinalysisText.querySelectorAll('span');
+
+    const loginSection = document.getElementById('loginSection');
+    const createAccountSection = document.getElementById('createAccountSection');
+    const patientSection = document.getElementById('patientSection');
+    const addPatientSection = document.getElementById('addPatientSection');
+    const testSection = document.getElementById('testSection');
+    const analysisSection = document.getElementById('analysisSection');
+    const reportSection = document.getElementById('reportSection'); // New report section
+
+    const loginForm = document.getElementById('loginForm');
+    const createDoctorForm = document.getElementById('createDoctorForm');
+    const createPatientForm = document.getElementById('createPatientForm');
+    const prepareTestForm = document.getElementById('prepareTestForm');
+
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+    const newUsernameInput = document.getElementById('newUsername');
+    const newPasswordInput = document.getElementById('newPassword');
+    const durationInput = document.getElementById('duration');
+    const durationUnitSelect = document.getElementById('durationUnit');
+
+    const loginMessage = document.getElementById('loginMessage');
+    const createAccountMessage = document.getElementById('createAccountMessage');
+    const patientMessage = document.getElementById('patientMessage');
+    const addPatientMessage = document.getElementById('addPatientMessage');
+    const testMessage = document.getElementById('testMessage');
+    const analysisMessage = document.getElementById('analysisMessage');
+
+    const patientListElement = document.getElementById('patientList');
+    const currentPatientDisplay = document.getElementById('currentPatientDisplay');
+    const currentPatientTestDisplay = document.getElementById('currentPatientTestDisplay');
+    const timerDisplay = document.getElementById('timer');
+    const sensorDataDisplay = document.getElementById('sensorDataDisplay');
+    const stopTestBtn = document.getElementById('stopTest');
+    const viewAnalysisBtn = document.getElementById('viewAnalysisBtn');
+    const generateReportBtn = document.getElementById('generateReportBtn'); // New button
+
+    // Chart View Buttons
+    const viewHeelWalkAnalysisBtn = document.getElementById('viewHeelWalkAnalysis');
+    const viewNormalWalkAnalysisBtn = document.getElementById('viewNormalWalkAnalysis');
+    const viewForefeetWalkAnalysisBtn = document.getElementById('viewForefeetWalkAnalysis');
+
+    // Report specific elements
+    const reportContentDiv = document.getElementById('reportContent');
+    const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+    const reportDateSpan = document.getElementById('reportDate');
+    const reportDoctorUsernameSpan = document.getElementById('reportDoctorUsername');
+    const reportPatientNameSpan = document.getElementById('reportPatientName');
+    const reportPatientAgeSpan = document.getElementById('reportPatientAge');
+    const reportPatientHospitalNumberSpan = document.getElementById('reportPatientHospitalNumber');
+    // const reportFilteredSamplesSpan = document.getElementById('filteredSamples'); // This span is in Analysis section, not Report. Removed from report populate logic.
+    const reportObservationsTextarea = document.getElementById('reportObservations');
+    const reportRecommendationsTextarea = document.getElementById('reportRecommendations');
+    const signatureBox = document.querySelector('#signatureSection .signature-box'); // Changed to select the box
+    const reportGenerationDateSpan = document.getElementById('reportGenerationDate');
+
+
+    // Loading bar elements
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingStatus = document.getElementById('loadingStatus');
+    const loadingBar = document.getElementById('loadingBar');
+
+
+    // --- Helper Functions ---
+
+    /**
+     * Displays a specific section and hides all others.
+     * @param {string} sectionId The ID of the section to show.
+     */
+    function showSection(sectionId) {
+      // Hide all main content sections initially
+      document.querySelectorAll('.section').forEach(section => {
+        section.classList.remove('active');
+      });
+      // Show the requested section
+      document.getElementById(sectionId).classList.add('active');
+
+      // Clear all messages when switching sections
+      clearMessages();
+
+      // Attempt to focus on the first relevant input of the new section
+      setTimeout(() => {
+        let firstInput;
+        if (sectionId === 'loginSection') {
+          firstInput = usernameInput;
+        } else if (sectionId === 'createAccountSection') {
+          firstInput = newUsernameInput;
+        } else if (sectionId === 'addPatientSection') {
+          firstInput = document.getElementById('firstName');
+        } else if (sectionId === 'testSection') {
+          firstInput = durationInput;
+        }
+        if (firstInput) {
+          firstInput.focus();
+        }
+      }, 50);
+
+      // Special handling for patient section to load list and display welcome message
+      if (sectionId === 'patientSection') {
+        loadPatients(); // Load patients specific to the logged-in doctor
+        currentPatientDisplay.textContent = `Welcome Doctor ${loggedInDoctorUsername}. Selected Patient: ${currentPatient ? `${currentPatient.first_name} ${currentPatient.middle_name ? currentPatient.middle_name + ' ' : ''}${currentPatient.last_name} (ID: ${currentPatient.hospital_number})` : 'No patient selected.'}`;
+      }
+      if (sectionId === 'testSection') {
+        currentPatientTestDisplay.textContent = currentPatient ? `Currently testing for: ${currentPatient.first_name} ${currentPatient.last_name} (ID: ${currentPatient.hospital_number})` : 'No patient selected for test.';
+        resetTestUI();
+      }
+    }
+
+    /**
+     * Displays a message to the user.
+     * @param {HTMLElement} element The DOM element to display the message in.
+     * @param {string} messageText The text of the message.
+     * @param {string} type 'success' or 'error'.
+     * @param {number} duration How long to show the message in ms.
+     */
+    function displayMessage(element, messageText, type, duration = 3000) {
+      element.textContent = messageText;
+      element.className = `message ${type} show ${type === 'success' ? 'fade-scale-in' : ''}`;
+      setTimeout(() => {
+        element.classList.remove('show', 'fade-scale-in');
+        element.textContent = '';
+        element.className = 'message';
+      }, duration);
+    }
+
+    /**
+     * Clears all message displays.
+     */
+    function clearMessages() {
+        document.querySelectorAll('.message').forEach(msg => {
+            msg.textContent = '';
+            msg.className = 'message';
+        });
+    }
+
+    /**
+     * Fetches data from the backend with error handling, including authorization via localStorage.
+     * @param {string} url The API endpoint.
+     * @param {object} options Fetch options (method, headers, body).
+     * @param {HTMLElement} messageElement Optional. The element to display messages.
+     * @returns {Promise<object>} The JSON response from the backend.
+     */
+    async function fetchData(url, options = {}, messageElement = null) {
+      if (loggedInDoctorUsername && options.method === 'POST') {
+          let bodyData = {};
+          if (options.body) {
+              try {
+                  bodyData = JSON.parse(options.body);
+              } catch (e) {
+                  console.error("Error parsing request body:", e);
+              }
+          }
+          bodyData.doctor_username = loggedInDoctorUsername;
+          options.body = JSON.stringify(bodyData);
+          options.headers = {
+              ...options.headers,
+              'Content-Type': 'application/json'
+          };
+      }
+
+      try {
+        const response = await fetch(url, options);
+        const data = await response.json();
+        if (!response.ok) {
+          const errorMessage = data.message || `Error: ${response.status} ${response.statusText}`;
+          if (messageElement) {
+            displayMessage(messageElement, errorMessage, 'error');
+          }
+          if (response.status === 401 || response.status === 403) {
+              localStorage.removeItem('loggedInDoctorUsername');
+              loggedInDoctorUsername = null;
+              showSection('loginSection');
+              displayMessage(loginMessage, 'Unauthorized or session invalid. Please log in again.', 'error', 5000);
+          }
+          throw new Error(errorMessage);
+        }
+        return data;
+      } catch (error) {
+        console.error('Fetch error:', error);
+        if (messageElement) {
+          displayMessage(messageElement, `Network error or server unavailable: ${error.message}`, 'error');
+        }
+        throw error;
+      }
+    }
+
+    // --- Authentication & Account Management ---
+
+    loginForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const username = usernameInput.value;
+      const password = passwordInput.value;
+
+      try {
+        const data = await fetchData(`${API_BASE_URL}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        }, loginMessage);
+
+        if (data.message === 'Login successful') {
+          loggedInDoctorUsername = data.username;
+          localStorage.setItem('loggedInDoctorUsername', loggedInDoctorUsername);
+          displayMessage(loginMessage, `Login successful.`, 'success');
+          showSection('patientSection');
+          usernameInput.value = '';
+          passwordInput.value = '';
+        } else {
+          displayMessage(loginMessage, data.message || 'Login failed.', 'error');
+        }
+      } catch (error) {
+        // Error already handled by fetchData
+      }
+    });
+
+    document.getElementById('showCreateAccount').addEventListener('click', () => {
+      showSection('createAccountSection');
+    });
+
+    document.getElementById('backToLogin').addEventListener('click', () => {
+      showSection('loginSection');
+      newUsernameInput.value = '';
+      newPasswordInput.value = '';
+    });
+
+    createDoctorForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const username = newUsernameInput.value;
+      const password = newPasswordInput.value;
+
+      try {
+        const data = await fetchData(`${API_BASE_URL}/create_doctor`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        }, createAccountMessage);
+
+        if (data.message === 'Account created') {
+          displayMessage(createAccountMessage, 'Account created successfully! Please login.', 'success');
+          showSection('loginSection');
+          newUsernameInput.value = '';
+          newPasswordInput.value = '';
+          usernameInput.value = username;
+          passwordInput.focus();
+        } else {
+          displayMessage(createAccountMessage, data.message || 'Account creation failed.', 'error');
+        }
+      } catch (error) {
+        // Error already handled by fetchData
+      }
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+        try {
+            await fetchData(`${API_BASE_URL}/logout`, { method: 'POST' }); 
+            localStorage.removeItem('loggedInDoctorUsername');
+            loggedInDoctorUsername = null;
+            currentPatient = null;
+            showSection('loginSection');
+            displayMessage(loginMessage, 'Logged out successfully.', 'success');
+        }
+        catch (error) {
+            console.error('Error during logout:', error);
+            displayMessage(loginMessage, `Logout failed: ${error.message}`, 'error');
+        }
+    });
+
+    // --- Patient Management ---
+
+    document.getElementById('addPatientBtn').addEventListener('click', () => {
+      showSection('addPatientSection');
+      createPatientForm.reset();
+    });
+
+    document.getElementById('backToPatientList').addEventListener('click', () => {
+      showSection('patientSection');
+    });
+
+    createPatientForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const firstName = document.getElementById('firstName').value;
+      const middleName = document.getElementById('middleName').value;
+      const lastName = document.getElementById('lastName').value;
+      const age = document.getElementById('age').value;
+      const hospitalNumber = document.getElementById('hospitalNumber').value;
+
+      try {
+        const createData = await fetchData(`${API_BASE_URL}/create_patient_account`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ first_name: firstName, middle_name: middleName, last_name: lastName, age: age, hospital_number: hospitalNumber })
+        }, addPatientMessage);
+
+        if (createData.patient_id) {
+          displayMessage(addPatientMessage, createData.message, 'success');
+          createPatientForm.reset();
+          loadPatients();
+          showSection('patientSection');
+        } else {
+            displayMessage(addPatientMessage, createData.message || 'Patient creation failed unexpectedly.', 'error');
+        }
+      } catch (error) {
+        // fetchData already displays error messages
+      }
+    });
+
+    /**
+     * Loads and displays the list of patients for the logged-in doctor.
+     */
+    async function loadPatients() {
+      if (!loggedInDoctorUsername) {
+          console.warn("Attempted to load patients without a logged-in doctor (localStorage empty).");
+          patientListElement.innerHTML = '<li style="justify-content: center; color: #777;">Please log in to view patients.</li>';
+          showSection('loginSection');
+          displayMessage(loginMessage, 'Please log in to view patients.', 'error');
+          return;
+      }
+
+      try {
+        const patients = await fetchData(`${API_BASE_URL}/get_patients`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ doctor_username: loggedInDoctorUsername })
+        }, patientMessage);
+        
+        patientListElement.innerHTML = '';
+
+        if (patients.length === 0) {
+          patientListElement.innerHTML = '<li style="justify-content: center; color: #777;">No patients found for this doctor. Add a new one!</li>';
+          return;
+        }
+
+        patients.forEach(patient => {
+          const li = document.createElement('li');
+          li.dataset.patientId = patient.patient_id;
+          li.innerHTML = `
+            <span>${patient.first_name} ${patient.middle_name ? patient.middle_name + ' ' : ''}${patient.last_name} (Age: ${patient.age}, Hospital: ${patient.hospital_number})</span>
+            <button class="select-patient-btn">SELECT</button>
+          `;
+          li.querySelector('.select-patient-btn').addEventListener('click', (event) => {
+            event.stopPropagation();
+            selectPatient(patient);
+          });
+          patientListElement.appendChild(li);
+        });
+      } catch (error) {
+        patientListElement.innerHTML = '<li style="justify-content: center; color: #cc0000;">Failed to load patients.</li>';
+      }
+    }
+
+    /**
+     * Selects a patient and navigates to the test section.
+     * @param {object} patient The selected patient object.
+     */
+    function selectPatient(patient) {
+      currentPatient = patient;
+      currentPatientDisplay.textContent = `Welcome Doctor ${loggedInDoctorUsername}. Selected Patient: ${currentPatient.first_name} ${currentPatient.last_name} (ID: ${currentPatient.hospital_number})`;
+      document.querySelectorAll('#patientList li').forEach(li => li.classList.remove('selected'));
+      const selectedLi = patientListElement.querySelector(`li[data-patient-id="${patient.patient_id}"]`);
+      if (selectedLi) {
+        selectedLi.classList.add('selected');
+      }
+      showSection('testSection');
+    }
+
+    // --- Walk Test Functionality ---
+
+    //TIMER
+    // Add this function definition to your existing JavaScript in index.html
+function updateTimer() {
+    timeElapsed++;
+    timerDisplay.textContent = `TIME: ${timeElapsed}s / ${currentTestDuration}s`;
+
+    if (timeElapsed >= currentTestDuration) {
+        // Automatically stop the test when duration is reached
+        displayMessage(testMessage, `Walk test duration (${currentTestDuration}s) completed. Stopping test...`, 'info');
+        stopWalkTest(); // Call the stop function
+    }
+}
+    prepareTestForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      let durationValue = parseInt(durationInput.value, 10);
+      const durationUnit = durationUnitSelect.value;
+
+      if (isNaN(durationValue) || durationValue <= 0) {
+        displayMessage(testMessage, 'Please enter a valid duration (positive number).', 'error');
+        durationInput.focus();
+        return;
+      }
+
+      if (durationUnit === 'minutes') {
+        durationValue *= 60;
+      }
+      currentTestDuration = durationValue;
+
+      timerDisplay.textContent = `TIME: 0s / ${currentTestDuration}s`;
+      displayMessage(testMessage, `Test duration set to ${currentTestDuration} seconds.`, 'success');
+    });
+
+    document.getElementById('startHeelWalk').addEventListener('click', () => startWalkTest('Heel_Walk'));
+    document.getElementById('startNormalWalk').addEventListener('click', () => startWalkTest('Normal_Walk'));
+    document.getElementById('startForefeetWalk').addEventListener('click', () => startWalkTest('Forefeet_Walk'));
+
+    //receiving live data from the backend
+socket.on('sensor_data', function (rawSensorData) {
+  if (!rawSensorData || !Array.isArray(rawSensorData)) {
+    document.getElementById('sensorDataDisplay').textContent = 'SENSOR DATA: Invalid or no data.';
+    return;
+  }
+
+  // ✅ Update each span individually (s1_value, s2_value, ..., s12_value)
+  rawSensorData.forEach((value, index) => {
+    const sensorSpan = document.getElementById(`s${index + 1}_value`);
+    if (sensorSpan) {
+      sensorSpan.textContent = `S${index + 1}: ${value !== undefined && value !== null ? value.toFixed(2) : '-'}`;
+    }
+  });
+});
+
+
+    async function startWalkTest(walkType) {
+  try {
+    if (!currentPatient) {
+      displayMessage(testMessage, 'Please select a patient first.', 'error');
+      showSection('patientSection');
+      return;
+    }
+    if (testRunning) {
+      displayMessage(testMessage, 'A test is already in progress. Please stop it first.', 'error');
+      return;
+    }
+    if (currentTestDuration === 0 || isNaN(currentTestDuration) || currentTestDuration <= 0) {
+      displayMessage(testMessage, 'Please set a valid test duration before starting.', 'error');
+      durationInput.focus();
+      return;
+    }
+
+    // ✅ Setup before sending request
+    currentWalkType = walkType;
+    testRunning = true;
+    timeElapsed = 0;
+    currentTestId = null;
+
+    document.getElementById('startHeelWalk').disabled = true;
+    document.getElementById('startNormalWalk').disabled = true;
+    document.getElementById('startForefeetWalk').disabled = true;
+    stopTestBtn.disabled = false;
+    viewAnalysisBtn.disabled = true;
+    generateReportBtn.disabled = true;
+
+    // ✅ Get values from DOM
+    const patientId = currentPatient.patient_id;
+    const duration = currentTestDuration;
+    const doctorUsername = loggedInDoctorUsername;
+
+    // ✅ Clear timer display and prepare
+    clearInterval(testIntervalId);
+    timerDisplay.textContent = '';
+    timeElapsed = 0;
+
+    // ✅ Emit test start to backend
+    socket.emit('start_test_command', {
+      patient_id: patientId,
+      duration: duration,
+      walk_type: walkType,
+      doctor_username: doctorUsername
+    });
+
+    // ✅ Wait for backend response
+    socket.once('test_started_ack', function (response) {
+      if (response.success) {
+        currentTestId = response.test_id;
+
+        alert(' Test started! Test ID: ' + response.test_id);
+        displayMessage(
+          testMessage,
+          `Started ${walkType} test for ${duration} seconds. Test ID: ${currentTestId}`,
+          'success'
+        );
+
+        timerDisplay.textContent = `TIME: ${timeElapsed}s / ${duration}s`;
+        testIntervalId = setInterval(updateTimer, 1000);  // 👈 Calls updateTimer every second
+
+      } else {
+        alert(' Failed to start test: ' + response.message);
+        displayMessage(testMessage, 'Failed to start test: ' + response.message, 'error');
+        testRunning = false;
+      }
+    });
+
+  } catch (error) {
+    displayMessage(testMessage, `Failed to start test: ${error.message}`, 'error');
+    testRunning = false;
+    document.getElementById('startHeelWalk').disabled = false;
+    document.getElementById('startNormalWalk').disabled = false;
+    document.getElementById('startForefeetWalk').disabled = false;
+    stopTestBtn.disabled = true;
+  }
+}
+
+    stopTestBtn.addEventListener('click', stopWalkTest);
+
+async function stopWalkTest() {
+  if (!testRunning) return;
+
+  clearInterval(testIntervalId);
+  testIntervalId = null;
+  testRunning = false;
+
+  document.getElementById('startHeelWalk').disabled = false;
+  document.getElementById('startNormalWalk').disabled = false;
+  document.getElementById('startForefeetWalk').disabled = false;
+  stopTestBtn.disabled = true;
+  viewAnalysisBtn.disabled = false;
+  generateReportBtn.disabled = false;
+
+  displayMessage(
+    testMessage,
+    `Test for ${currentWalkType} stopped. Duration: ${timeElapsed} seconds.`,
+    'success'
+  );
+
+  // ✅ Emit socket event to stop test
+  socket.emit('stop_test_command', { testId: currentTestId, doctor_username: loggedInDoctorUsername });
+
+
+  // ✅ Wait for acknowledgement
+  socket.once('test_stopped_ack', (response) => {
+    if (response.success) {
+      displayMessage(testMessage, response.message, 'success');
+    } else {
+      displayMessage(testMessage, response.message, 'error');
+    }
+  });
+}
+
+
+    function resetTestUI() {
+    clearInterval(testIntervalId);
+    testIntervalId = null;
+    testRunning = false;
+    timeElapsed = 0;
+    currentTestId = null;
+    currentWalkType = '';
+
+    timerDisplay.textContent = `TIME: 0s / ${currentTestDuration}s`;
+
+    // Reset each individual sensor span to its default text
+    const pressureSensorKeys = [
+        'left_p1', 'left_p2', 'left_p3', 'left_p4', 'left_p5', 'left_p6',
+        'right_p1', 'right_p2', 'right_p3', 'right_p4', 'right_p5', 'right_p6'
+    ];
+    pressureSensorKeys.forEach((key, index) => {
+        const sensorId = `s${index + 1}_value`;
+        const sensorElement = document.getElementById(sensorId);
+        if (sensorElement) {
+            sensorElement.textContent = `S${index + 1}: -`;
+        }
+    });
+
+    document.getElementById('startHeelWalk').disabled = false;
+    document.getElementById('startNormalWalk').disabled = false;
+    document.getElementById('startForefeetWalk').disabled = false;
+    stopTestBtn.disabled = true;
+    viewAnalysisBtn.disabled = true;
+    generateReportBtn.disabled = true; // Disable on reset
+  }
+
+    // Navigation from Test Section
+    document.getElementById('backFromTestToPatientList').addEventListener('click', () => {
+      stopWalkTest();
+      showSection('patientSection');
+    });
+
+    document.getElementById('viewAnalysisBtn').addEventListener('click', () => {
+      if (!currentPatient) {
+        displayMessage(testMessage, 'Please select a patient first to view analysis.', 'error');
+        return;
+      }
+      showSection('analysisSection');
+      fetchAnalysisData(currentPatient.patient_id);
+    });
+
+    // --- Analysis Section ---
+
+    document.getElementById('backToTestFromAnalysis').addEventListener('click', () => {
+      showSection('testSection');
+      document.querySelectorAll('.chart-group').forEach(group => group.style.display = 'none');
+    });
+
+    viewHeelWalkAnalysisBtn.addEventListener('click', () => toggleCharts('Heel_WalkCharts'));
+    viewNormalWalkAnalysisBtn.addEventListener('click', () => toggleCharts('Normal_WalkCharts'));
+    viewForefeetWalkAnalysisBtn.addEventListener('click', () => toggleCharts('Forefeet_WalkCharts'));
+
+    function toggleCharts(chartGroupId) {
+      document.querySelectorAll('.chart-group').forEach(group => {
+        group.style.display = 'none';
+      });
+      const selectedGroup = document.getElementById(chartGroupId);
+      if (selectedGroup) {
+        selectedGroup.style.display = 'flex';
+      }
+    }
+
+    /**
+     * Fetches analysis data for a given patient_id and renders charts for all their walk types.
+     * Stores data in currentAnalysisData for report generation.
+     * @param {string} patientId The ID of the patient to analyze.
+     */
+    async function fetchAnalysisData(patientId) {
+      console.log('fetchAnalysisData started');
+      if (!loggedInDoctorUsername) {
+          displayMessage(analysisMessage, 'Unauthorized: Please log in to view analysis.', 'error');
+          showSection('loginSection');
+          return;
+      }
+
+      try {
+        const analysisData = await fetchData(`${API_BASE_URL}/get_analyses_for_patient/${patientId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        doctor_username: loggedInDoctorUsername // ✅ Add this!
+    })
+}, analysisMessage);
+
+        currentAnalysisData = analysisData; // Store fetched data for report generation
+
+        if (!analysisData || Object.keys(analysisData).length <= 1) {
+          displayMessage(analysisMessage, 'No analysis data found for this patient across any walk type, or data is insufficient for analysis.', 'error');
+          document.getElementById('filteredSamples').textContent = '0';
+          Object.values(charts).forEach(chart => chart.destroy());
+          generateReportBtn.disabled = true; // No data, disable report
+          generateGraphReportBtn.disabled = true;
+          return;
+        }
+
+        document.getElementById('filteredSamples').textContent = analysisData.filtered_samples !== undefined ? analysisData.filtered_samples : '0';
+
+        Object.values(charts).forEach(chart => chart.destroy());
+        for (const key in charts) { delete charts[key]; }
+
+        let atLeastOneChartGroupShown = false;
+        const allChartGroupIds = ['Heel_WalkCharts', 'Normal_WalkCharts', 'Forefeet_WalkCharts'];
+        const groupLabels = ['Forefoot', 'Arch', 'Heel'];
+
+        for (const walkTypeKey in analysisData) {
+            if (walkTypeKey.endsWith('_analysis')) {
+                const walkTypeName = walkTypeKey.replace('_analysis', '');
+                const walkData = analysisData[walkTypeKey];
+
+                if (walkData && Array.isArray(walkData.left_foot_group_averages) && Array.isArray(walkData.right_foot_group_averages) && (walkData.left_foot_group_averages.length === 3 || walkData.right_foot_group_averages.length === 3)) {
+
+                    const leftCanvasId = `${walkTypeName}LeftChart`;
+                    const leftCtx = document.getElementById(leftCanvasId)?.getContext('2d');
+                    if (leftCtx) {
+                      charts[leftCanvasId] = new Chart(leftCtx, {
+                          type: 'bar',
+                          data: {
+                              labels: groupLabels,
+                              datasets: [{
+                                  label: 'Left Foot Average Sensor Value',
+                                  data: walkData.left_foot_group_averages,
+                                  backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                                  borderColor: 'rgb(75, 192, 192)',
+                                  borderWidth: 1
+                              }]
+                          },
+                          options: {
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              plugins: {
+                                  legend: { display: true, position: 'top' },
+                                  title: { display: true, text: `${walkTypeName.replace('_', ' ')} - Left Foot` }
+                              },
+                              scales: {
+                                  x: {
+                                      title: { display: true, text: 'Sensor Group' },
+                                      grid: { display: false }
+                                  },
+                                  y: {
+                                      beginAtZero: true,
+                                      title: { display: true, text: 'Average Sensor Value' }
+                                  }
+                              }
+                          }
+                      });
+                    }
+
+                    const rightCanvasId = `${walkTypeName}RightChart`;
+                    const rightCtx = document.getElementById(rightCanvasId)?.getContext('2d');
+                    if (rightCtx) {
+                      charts[rightCanvasId] = new Chart(rightCtx, {
+                          type: 'bar',
+                          data: {
+                              labels: groupLabels,
+                              datasets: [{
+                                  label: 'Right Foot Average Sensor Value',
+                                  data: walkData.right_foot_group_averages,
+                                  backgroundColor: 'rgba(255, 99, 132, 0.6)',
+                                  borderColor: 'rgb(255, 99, 132)',
+                                  borderWidth: 1
+                              }]
+                          },
+                          options: {
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              plugins: {
+                                  legend: { display: true, position: 'top' },
+                                  title: { display: true, text: `${walkTypeName.replace('_', ' ')} - Right Foot` }
+                              },
+                              scales: {
+                                  x: {
+                                      title: { display: true, text: 'Sensor Group' },
+                                      grid: { display: false }
+                                  },
+                                  y: {
+                                      beginAtZero: true,
+                                      title: { display: true, text: 'Average Sensor Value' }
+                                  }
+                              }
+                          }
+                      });
+                    }
+                } else {
+                    console.info(`No valid grouped sensor data found for ${walkTypeName} analysis to create charts.`);
+                }
+            }
+        }
+
+        for (const chartGroupId of allChartGroupIds) {
+            const selectedGroup = document.getElementById(chartGroupId);
+            const walkTypeName = chartGroupId.replace('Charts', '');
+            if (selectedGroup && charts[`${walkTypeName}LeftChart`] && charts[`${walkTypeName}RightChart`]) {
+                selectedGroup.style.display = 'flex';
+                atLeastOneChartGroupShown = true;
+            } else {
+                selectedGroup.style.display = 'none';
+            }
+        }
+
+        if (!atLeastOneChartGroupShown) {
+            displayMessage(analysisMessage, 'No valid analysis data found for any walk type after processing.', 'error');
+            generateReportBtn.disabled = true;
+            generateGraphReportBtn.disabled = true;
+        } else {
+            const firstVisibleChartGroup = document.querySelector('.chart-group[style*="display: flex"]');
+            if (firstVisibleChartGroup) {
+                const viewButtonId = `view${firstVisibleChartGroup.id.replace('Charts', '')}Analysis`;
+                const viewButton = document.getElementById(viewButtonId);
+                if (viewButton) {
+                    viewButton.click();
+                }
+            }
+            generateReportBtn.disabled = false; // Enable report generation button
+            // Call function to save charts as images after they are rendered
+            generateGraphReportBtn.disabled = false;
+
+            await saveChartsAsImages();}
+
+      } catch (error) {
+        displayMessage(analysisMessage, `Error fetching analysis data: ${error.message}`, 'error');
+        document.getElementById('filteredSamples').textContent = '0';
+        generateReportBtn.disabled = true;
+        generateGraphReportBtn.disabled = true;
+      }
+    }
+
+    /**
+     * Converts Chart.js canvases to image data and sends them to the backend.
+     */
+    async function saveChartsAsImages() {
+        if (!currentPatient || !loggedInDoctorUsername) {
+            console.warn("Cannot save charts: Patient or doctor not selected.");
+            return;
+        }
+
+        const walkTypes = ['Heel_Walk', 'Normal_Walk', 'Forefeet_Walk'];
+        await new Promise(resolve => setTimeout(resolve, 500)); // Give charts a moment to render
+        for (const type of walkTypes) {
+            const leftCanvasId = `${type}LeftChart`;
+            const rightCanvasId = `${type}RightChart`;
+
+            const leftCanvas = document.getElementById(leftCanvasId);
+            const rightCanvas = document.getElementById(rightCanvasId);
+
+            if (leftCanvas && charts[leftCanvasId]) { // Check if chart instance exists
+                try {
+                    const leftImageData = leftCanvas.toDataURL('image/png');
+                    await sendChartImageToBackend(leftImageData, currentPatient.patient_id, type, 'left');
+                } catch (error) {
+                    console.error(`Error saving ${type} Left chart:`, error);
+                }
+            }
+
+            if (rightCanvas && charts[rightCanvasId]) { // Check if chart instance exists
+                try {
+                    const rightImageData = rightCanvas.toDataURL('image/png');
+                    await sendChartImageToBackend(rightImageData, currentPatient.patient_id, type, 'right');
+                } catch (error) {
+                    console.error(`Error saving ${type} Right chart:`, error);
+                }
+            }
+        }
+    }
+
+    /**
+     * Sends a chart image (base64 data URL) to the Flask backend.
+     * @param {string} imageData The base64 encoded image data URL.
+     * @param {number} patientId The ID of the patient.
+     * @param {string} walkType The type of walk (e.g., 'Heel_Walk').
+     * @param {string} footType 'left' or 'right'.
+     */
+    async function sendChartImageToBackend(imageData, patientId, walkType, footType) {
+        try {
+            const response = await fetch(`${API_BASE_URL}/save_chart_image`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    doctor_username: loggedInDoctorUsername,
+                    patient_id: patientId,
+                    walk_type: walkType,
+                    foot_type: footType,
+                    image_data: imageData
+                })
+            });
+            const data = await response.json();
+             console.log("DEBUG Frontend: Data received from /save_chart_image:", data);
+            if (!response.ok) {
+                console.error(`Failed to save chart image for ${walkType} ${footType}:`, data.message);
+            } else {
+                console.log(`Chart image saved successfully for ${walkType} ${footType}:`, data.message);
+                // Store the filename for later retrieval
+                //const filename = data.file_path.split('/').pop(); // Extract filename from the returned path
+                savedChartImagePaths[`${walkType}_${footType}`] = data.filename; // Directly use the 'filename' sent from the backend
+            }
+        } catch (error) {
+            console.error(`Network error while saving chart image for ${walkType} ${footType}:`, error);
+        }
+    }
+
+
+    // --- Report Generation Logic ---
+    generateReportBtn.addEventListener('click', async () => {
+        if (!currentPatient || !loggedInDoctorUsername || Object.keys(currentAnalysisData).length <= 1) {
+            displayMessage(analysisMessage, 'No complete analysis data available to generate a report.', 'error');
+            return;
+        }
+        showSection('reportSection');
+        await populateReportContent();
+    });
+
+    document.getElementById('backToAnalysisFromReport').addEventListener('click', () => {
+        showSection('analysisSection');
+    });
+
+    async function populateReportContent() {
+        // Clear previous content and set up base structure for the report
+        reportContentDiv.innerHTML = `
+            <h1 style="text-align: center; color: #007bb5; font-size: 2.2em; margin-bottom: 20px;">SPINALYSIS SYSTEM - Walk Test Analysis Report</h1>
+            
+            <div style="margin-bottom: 20px;">
+                <p><strong>Patient Name:</strong> <span id="reportPatientName"></span></p>
+                <p><strong>Age:</strong> <span id="reportPatientAge"></span></p>
+                <p><strong>Hospital Number:</strong> <span id="reportPatientHospitalNumber"></span></p>
+                <p><strong>Date of Report:</strong> <span id="reportDate"></span></p>
+                <p><strong>Prepared By (Doctor):</strong> Dr. <span id="reportDoctorUsername"></span></p>
+            </div>
+            
+            <hr style="border: 0; height: 1px; background-color: #eee; margin: 20px 0;">
+
+            <div class="report-page-break">
+                <h3>4. Observations and Clinical Interpretation</h3>
+                <textarea id="reportObservations" style="width: 100%; height: 350px; border: 2px solid #007bb5; border-radius: 5px; padding: 10px; box-sizing: border-box;" readonly></textarea>
+
+                <h3>5. Recommendations/Further Steps</h3>
+                <textarea id="reportRecommendations" style="width: 100%; height: 350px; border: 2px solid #007bb5; border-radius: 5px; padding: 10px; box-sizing: border-box;" readonly></textarea>
+            </div>
+
+            <div id="signatureSection">
+                <div class="signature-box faint-signature">PHYSICIAN'S SIGNATURE</div>
+                <span id="signatureLabel">Doctor's Signature</span>
+                <p style="margin-top: 5px; font-size: 0.9em; color: #555;">Date: <span id="reportGenerationDate"></span></p>
+            </div>
+        `;
+
+        // Update basic info for the report header
+        document.getElementById('reportDate').textContent = new Date().toLocaleDateString();
+        document.getElementById('reportDoctorUsername').textContent = loggedInDoctorUsername;
+        document.getElementById('reportPatientName').textContent = `${currentPatient.first_name} ${currentPatient.middle_name ? currentPatient.middle_name + ' ' : ''}${currentPatient.last_name}`;
+        document.getElementById('reportPatientAge').textContent = currentPatient.age;
+        document.getElementById('reportPatientHospitalNumber').textContent = currentPatient.hospital_number;
+        document.getElementById('reportGenerationDate').textContent = new Date().toLocaleDateString(); // For signature section date
+
+        // Ensure textareas are blank
+        document.getElementById('reportObservations').value = '';
+        document.getElementById('reportRecommendations').value = '';
+
+        // Removed the image population logic as per the request
+    }
+
+    downloadPdfBtn.addEventListener('click', async () => {
+        downloadPdfBtn.disabled = true; // Disable button
+        loadingOverlay.style.display = 'flex'; // Show loading...
+        loadingStatus.textContent = 'Preparing report for PDF...';
+        loadingBar.style.width = '10%'; // Initial progress
+
+        // Give the browser a moment to render the changes before capturing
+        await new Promise(resolve => setTimeout(resolve, 500)); 
+
+        const { jsPDF } = window.jspdf;
+        const element = document.getElementById('reportContent');
+
+        html2canvas(element, {
+            scale: 2, // Increase scale for better quality
+            useCORS: true, // Needed if you load images from external sources
+            logging: true,
+            onclone: (document) => {
+                // Remove elements that should not be in the PDF, if any
+                // In this case, since we dynamically populate, this might not be strictly needed for content that is explicitly excluded.
+                // However, if there were UI elements to hide just for PDF, this is where you'd do it.
+            }
+        }).then(canvas => {
+            const imgData = canvas.toDataURL('image/png');
+            const imgWidth = 210; // A4 width in mm
+            const pageHeight = 297; // A4 height in mm
+            const imgHeight = canvas.height * imgWidth / canvas.width;
+            let heightLeft = imgHeight;
+
+            const doc = new jsPDF('p', 'mm', 'a4');
+            let position = 0;
+
+            doc.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+
+            while (heightLeft >= 0) {
+                position = heightLeft - imgHeight;
+                doc.addPage();
+                doc.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                heightLeft -= pageHeight;
+            }
+
+            loadingBar.style.width = '80%';
+            loadingStatus.textContent = 'Generating PDF...';
+
+            // Simulate a slight delay for better UX
+            setTimeout(() => {
+                doc.save('Spinalysis_Report.pdf');
+                loadingBar.style.width = '100%';
+                loadingStatus.textContent = 'Download complete!';
+                setTimeout(() => {
+                    loadingOverlay.style.display = 'none';
+                    downloadPdfBtn.disabled = false; // Re-enable button
+                }, 500); // Hide after a short delay
+            }, 1000);
+        }).catch(error => {
+            console.error('Error generating PDF:', error);
+            loadingOverlay.style.display = 'none';
+            downloadPdfBtn.disabled = false; // Re-enable button
+            displayMessage(reportSection.querySelector('.message') || analysisMessage, 'Failed to generate PDF report. Please try again.', 'error', 5000);
+        });
+    });
+
+
+      // Assuming these are already defined globally or accessible:
+// const API_BASE_URL = 'http://127.0.0.1:8000';
+// let loggedInDoctorUsername = '';
+// let currentPatient = null;
+// let savedChartImagePaths = {}; // This object should store filenames like {'Heel_Walk_left': 'heel_walk_left_chart.png', ...}
+// const analysisMessage = document.getElementById('analysisMessage'); // Assuming you have this message div
+
+// Get reference to the new button
+const generateGraphReportBtn = document.getElementById('generateGraphReportBtn');
+
+// Add event listener for the new button
+generateGraphReportBtn.addEventListener('click', async () => {
+    if (!loggedInDoctorUsername || !currentPatient || Object.keys(savedChartImagePaths).length === 0) {
+        displayMessage(analysisMessage, 'Please select a patient and ensure graphs are generated before creating a graph report.', 'error');
+        return;
+    }
+
+    displayMessage(analysisMessage, 'Generating graph report...', 'info');
+    generateGraphReportBtn.disabled = true; // Disable button during generation
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/generate_graph_report`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                doctor_username: loggedInDoctorUsername,
+                patient_id: currentPatient.patient_id,
+                chart_image_filenames: savedChartImagePaths // Send the map of filenames
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to generate graph report.');
+        }
+
+        // If successful, the backend sends back a PDF blob
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Graph_Report_${currentPatient.first_name}_${currentPatient.last_name || ''}_${new Date().toISOString().slice(0,10)}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url); // Clean up the object URL
+
+        displayMessage(analysisMessage, 'Graph report generated and downloaded successfully!', 'success');
+
+    } catch (error) {
+        console.error('Error generating graph report:', error);
+        displayMessage(analysisMessage, `Error generating graph report: ${error.message}`, 'error');
+    } finally {
+        generateGraphReportBtn.disabled = false; // Re-enable button
+    }
+});
+
+// IMPORTANT: You need to enable this button when charts are successfully generated and saved.
+// Find the `fetchAnalysisData` function, and in its `finally` block (or after `saveChartsAsImages()` completes successfully), add:
+// generateGraphReportBtn.disabled = false;
+// (It's already covered by the `generateReportBtn.disabled = false;` and the `else` block in your existing `fetchAnalysisData` logic,
+// but ensure it's specifically enabled for the graph report button too.)
+// In your `fetchAnalysisData` function, inside the `else` block after `atLeastOneChartGroupShown`:
+// generateReportBtn.disabled = false;
+// generateGraphReportBtn.disabled = false; // Add this line
+
+
+    // --- Initial Load ---
+    document.addEventListener('DOMContentLoaded', () => {
+        // Handle splash screen animation
+        document.body.classList.add('splash-active'); // Add class to prevent scrolling during splash
+        document.querySelector('.container').style.display = 'none';
+
+        setTimeout(() => {
+            companyLogo.style.display = 'block';
+            companyLogo.classList.add('show');
+        }, 500);
+
+        setTimeout(() => {
+            spinner.style.display = 'block';
+            spinalysisText.classList.add('show');
+            animateSpinalysisText();
+        }, 2000);
+    });
+
+    function animateSpinalysisText() {
+        spinalysisLetters.forEach((span, index) => {
+            span.style.animationDelay = `${index * 0.1}s`;
+            span.style.animation = 'fadeInRise 0.5s ease-out forwards';
+        });
+
+        const totalAnimationTime = (spinalysisLetters.length * 0.1 * 1000) + 500 + 1000;
+        setTimeout(() => {
+            splashScreen.classList.add('hidden');
+            splashScreen.addEventListener('transitionend', () => {
+                splashScreen.style.display = 'none';
+                document.body.classList.remove('splash-active'); // Remove class to allow scrolling
+                document.querySelector('.container').style.display = 'block';
+                loggedInDoctorUsername = localStorage.getItem('loggedInDoctorUsername');
+                if (loggedInDoctorUsername) {
+                    showSection('patientSection');
+                } else {
+                    showSection('loginSection');
+                }
+                resetTestUI();
+            }, { once: true });
+        }, 2000 + totalAnimationTime);
+    }
+
+  </script>
 </body>
 </html>
