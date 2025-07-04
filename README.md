@@ -11,8 +11,8 @@ The data collected from the sensors is transmitted wirelessly and visualized thr
 Aim
 The objective of this project is to analyze foot pressure data and generate a comprehensive health report, with a particular focus on evaluating the condition of the S1 and L1 spinal nerves.
 
-
 Team Members
+
 Shreesha Kumar M G — Lead Developer |UI Designer | Electronics & PCB Designer | Hardware Integration
 
 Shashank B — UI Designer | Head of Bio-Design | Medical Accuracy | Sensor Placement 
