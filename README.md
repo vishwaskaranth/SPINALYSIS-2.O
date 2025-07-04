@@ -18,7 +18,7 @@ The objective of this project is to **analyze foot pressure data** and **generat
 ## Team Members
 
 * **Shreesha Kumar M G** — Lead Developer | UI Designer | Electronics & PCB Designer | Hardware Integration
-* **Shashank B** — UI Designer | Head of Bio-Design | Medical Accuracy | Sensor Placement
+* **Shashank B** — UI Designer | Hardware Testing | Head of Bio-Design | Medical Accuracy | Sensor Placement
 * **P. Vishwas Karanth** — Hardware-UI Integrator | PCB Verification & Hardware Testing | Sensor Placement | CAD Designer
 
 ## Mentors:
