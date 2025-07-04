@@ -17,7 +17,7 @@ Shreesha Kumar M G — Lead Developer |UI Designer | Electronics & PCB Designer 
 
 Shashank B — UI Designer | Head of Bio-Design | Medical Accuracy | Sensor Placement 
 
-P. Vishwas Karanth — Hardware-UI Integrator | PCB Verification & Testing | Sensor Placement | CAD Designer
+P. Vishwas Karanth — Hardware-UI Integrator | PCB Verification & Hardware Testing | Sensor Placement | CAD Designer
 
 Mentors:
 
