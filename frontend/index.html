@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPINALYSIS SYSTEM</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+
+
+
+
+
+  <style>
+    /* Global Styles & Body Background */
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #e0f2f7;
+      color: #333;
+      font-size: 1.1em;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh; /* Keep for full height of background visual */
+      background-image:
+        radial-gradient(circle, #a7d9f2 1px, transparent 1px),
+        radial-gradient(circle, #a7d9f2 1px, transparent 1px);
+      background-size: 40px 40px;
+      background-position: 0 0, 20px 20px;
+      /* Removed overflow: hidden from here. Handled by .splash-active class. */
+    }
+
+    /* Splash Screen Styles */
+    #splashScreen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: #e0f2f7; /* Matches body background */
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999; /* Ensure it's on top of everything */
+      transition: opacity 1s ease-out; /* For fading out the splash screen */
+      opacity: 1; /* Initially visible */
+    }
+
+    #splashScreen.hidden {
+      opacity: 0;
+      pointer-events: none; /* Make it unclickable after fade */
+    }
+
+    /* New class for body when splash screen is active */
+    body.splash-active {
+        overflow: hidden; /* Hide body scrollbar only when splash is active */
+    }
+
+    #companyLogo {
+      max-width: 80%; /* Adjust as needed */
+      max-height: 40vh; /* Adjust as needed */
+      object-fit: contain;
+      display: none; /* Hidden initially, shown by JS */
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+    }
+
+    #companyLogo.show {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    .spinner {
+      border: 6px solid rgba(0, 123, 181, 0.2); /* Lighter blue border */
+      border-top: 6px solid #007bb5; /* Darker blue active border */
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      animation: spin 1s linear infinite;
+      margin-top: 40px;
+      display: none; /* Hidden initially */
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .spinalysis-text {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 3.5em; /* Larger font for impact */
+      font-weight: bold;
+      color: #007bb5;
+      margin-top: 30px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      letter-spacing: 5px;
+      opacity: 0; /* Hidden initially, shown after logo */
+      transition: opacity 0.5s ease-out;
+    }
+
+    .spinalysis-text.show {
+        opacity: 1;
+    }
+
+    .spinalysis-text span {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.3s ease-out, transform 0.3s ease-out; /* Base transition */
+      display: inline-block; /* Essential for transform on spans */
+    }
+
+    /* Animation for individual letters */
+    @keyframes fadeInRise {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+
+    /* Main Container for content */
+    .container {
+      background-color: rgba(255, 255, 255, 0.95);
+      padding: 30px; /* Reduced padding */
+      border-radius: 15px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+      margin: 30px auto;
+      width: 95%;
+      max-width: 1400px;
+      box-sizing: border-box;
+      text-align: center;
+      overflow-y: auto; 
+    }
+
+    h1 {
+      font-size: 2.8em;
+      font-weight: 700;
+      color: #007bb5;
+      text-transform: uppercase;
+      margin-bottom: 30px;
+      letter-spacing: 2px;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+    }
+
+    h2 {
+      font-size: 2.2em;
+      font-weight: 600;
+      color: #005f8f;
+      margin-bottom: 25px;
+      letter-spacing: 1.2px;
+    }
+
+    /* Form Styles */
+    form {
+      display: flex;
+      flex-direction: column;
+      margin-top: 20px;
+      align-items: center; /* Centers the form-groups */
+    }
+
+    .form-group {
+        width: 100%; /* Take full width of the form's content area */
+        max-width: 350px; /* Limit individual form group width */
+        margin-bottom: 15px; /* Spacing between groups */
+        text-align: left; /* Align label/input content left */
+        box-sizing: border-box; /* Crucial for consistent sizing */
+    }
+
+    .form-group label {
+        display: block; /* Ensure label is on its own line */
+        margin-bottom: 5px;
+        font-weight: bold;
+        color: #555;
+    }
+
+    .form-group input[type="text"],
+    .form-group input[type="password"],
+    .form-group input[type="number"],
+    .form-group select {
+        width: 100%; /* Fill the form-group width */
+        padding: 12px 15px;
+        border: 1px solid #b0d8ea;
+        border-radius: 8px;
+        font-size: 1em;
+        box-sizing: border-box; /* Include padding and border in element's total width/height */
+        transition: all 0.3s ease;
+    }
+
+    /* Specific style for duration input in test section */
+    .duration-group {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+        max-width: 350px; /* Limit overall width for the duration input group */
+        margin-bottom: 15px; /* Add spacing below this group */
+    }
+    .duration-group input {
+        max-width: 150px; /* Specific width for duration number input */
+    }
+    .duration-group select {
+        width: auto; /* Allow select to size naturally */
+        max-width: 120px; /* Max width for unit select */
+    }
+
+
+    button {
+      background-color: #007bb5;
+      color: white;
+      padding: 12px 25px;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      font-size: 1.1em;
+      transition: background-color 0.3s ease, transform 0.2s ease, box-shadow 0.3s ease;
+      box-shadow: 0 4px 10px rgba(0, 123, 181, 0.3);
+      margin: 8px;
+    }
+
+    button:hover {
+      background-color: #005f8f;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 15px rgba(0, 123, 181, 0.4);
+    }
+
+    button:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    /* Secondary Button Style */
+    .secondary-btn {
+      background-color: #6c757d;
+      box-shadow: 0 4px 10px rgba(108, 117, 125, 0.3);
+    }
+
+    .secondary-btn:hover {
+      background-color: #5a6268;
+      box-shadow: 0 6px 15px rgba(108, 117, 125, 0.4);
+    }
+
+    /* Section Management */
+    .section {
+      display: none;
+      padding: 20px 0;
+      border-top: 1px solid #eee;
+      margin-top: 20px;
+      height: auto; 
+      min-height: fit-content;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    /* Messages */
+    .message {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 5px;
+      font-weight: bold;
+      opacity: 0; /* Initially hidden */
+      transition: opacity 0.3s ease;
+    }
+
+    .message.show {
+      opacity: 1; /* Show when 'show' class is added */
+    }
+
+    .message.error {
+      background-color: #ffe5e5; /* Lighter red */
+      color: #cc0000; /* Darker red */
+      border: 1px solid #cc0000;
+    }
+
+    .message.success {
+      background-color: #e6ffe6; /* Lighter green */
+      color: #008000; /* Darker green */
+      border: 1px solid #008000;
+    }
+
+    /* New: Animation for success messages */
+    .message.success.fade-scale-in {
+        animation: fadeScaleIn 0.5s ease-out forwards;
+    }
+
+    @keyframes fadeScaleIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px) scale(0.95);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    /* Patient List Styles */
+    #patientList {
+      list-style-type: none;
+      padding: 0;
+      overflow-y: auto; /* Keep auto in case content still overflows overall viewport */
+      border: 1px solid #b0d8ea;
+      border-radius: 8px;
+      margin-top: 20px;
+      background-color: #fcfdff;
+    }
+
+    #patientList li {
+      padding: 10px 20px; /* Reduced padding */
+      border-bottom: 1px solid #e0f2f7;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background-color 0.2s ease, border-left 0.2s ease;
+      font-size: 1.1em;
+      color: #444;
+    }
+
+    #patientList li:last-child {
+      border-bottom: none;
+    }
+
+    #patientList li:hover {
+      background-color: #e0f2f7;
+    }
+
+    #patientList li.selected {
+      background-color: #d4eff7;
+      font-weight: bold;
+      border-left: 5px solid #007bb5;
+      color: #005f8f;
+    }
+
+    /* Timer and Data Display */
+    #timer, #sensorDataDisplay {
+      font-size: 1.4em;
+      margin: 15px 0;
+      color: #0056b3;
+      font-weight: bold;
+      background-color: #f0f8ff;
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: 1px solid #b0d8ea;
+    }
+
+    #currentPatientDisplay {
+      margin-top: 20px;
+      font-size: 1.3em;
+      font-weight: bold;
+      color: #007bb5;
+      background-color: #e6f7ff;
+      padding: 10px 15px;
+      border-radius: 8px;
+      border: 1px solid #a7d9f2;
+    }
+    #currentPatientTestDisplay {
+      font-size: 1.1em;
+      margin-bottom: 15px;
+      color: #444;
+      font-style: italic;
+    }
+
+    /* Chart Styles */
+    .chart-group {
+      display: none; /* Hidden by default */
+      margin-top: 15px; /* Adjusted margin */
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+      padding: 20px;
+      border: 1px solid #b0d8ea;
+      border-radius: 12px;
+      background-color: #effaff;
+      box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.05);
+    }
+    .chart-group h3 {
+      width: 100%;
+      font-size: 1.8em;
+      color: #005f8f;
+      margin-top: 0;
+      margin-bottom: 20px;
+      text-transform: capitalize;
+      letter-spacing: 0.8px;
+    }
+    .chart-container {
+      width: 100%;
+      max-width: 450px;
+      height: 300px;
+      margin: 0 auto;
+      background-color: #f8f8f8;
+      border-radius: 10px;
+      padding: 15px;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+      box-sizing: border-box;
+      position: relative;
+    }
+    .chart-controls {
+      margin-bottom: 20px;
+    }
+    .chart-controls button {
+      background-color: #28a745; /* Green for view charts buttons */
+      box-shadow: 0 4px 10px rgba(40, 167, 69, 0.3);
+    }
+    .chart-controls button:hover {
+      background-color: #218838;
+      box-shadow: 0 6px 15px rgba(40, 167, 69, 0.4);
+    }
+
+    /* Report Section Specific Styles */
+    #reportContent {
+      font-family: 'Times New Roman', serif; /* Applied Times New Roman */
+      padding: 30px;
+      border: 1px solid #dcdcdc;
+      border-radius: 10px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.05);
+      background-color: #fff;
+      max-width: 900px; /* Adjust for report width */
+      margin: 20px auto;
+      text-align: left; /* Align text within report */
+      font-size: 0.9em; /* Slightly smaller font for report readability */
+      /* Removed position: relative; as absolute positioning of header elements is no longer used */
+    }
+
+    #reportContent h1, #reportContent h2, #reportContent h3 {
+      color: #005f8f;
+      text-align: center;
+      margin-top: 20px;
+      margin-bottom: 15px;
+    }
+    #reportContent p, #reportContent ul {
+      margin-bottom: 10px;
+    }
+    #reportContent ul {
+      list-style-type: none; /* Remove default bullets */
+      padding-left: 0;
+    }
+    #reportContent ul li {
+      margin-bottom: 5px;
+    }
+    /* Removed .report-header-info and its associated styles */
+    /* Removed #reportContent h3:first-of-type margin-top as the header info is no longer absolutely positioned */
+
+    .report-chart-container { 
+        text-align: center;
+        margin: 20px 0;
+    }
+    .report-chart-container img { 
+        max-width: 100%;
+        height: auto;
+        border: 1px solid #eee;
+        border-radius: 8px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08); /* Adjusted shadow for consistency */
+    }
+    /* Page break for observations/recommendations */
+    .report-page-break {
+        page-break-before: always;
+        margin-top: 50px; /* Add some margin after page break */
+    }
+
+    #signatureSection {
+        margin-top: 50px;
+        text-align: right;
+    }
+    /* Styling for the signature box */
+    .signature-box {
+        border: 1px solid #333; /* A visible border for the box */
+        width: 250px; /* A good width for a signature */
+        height: 80px; /* Ample height for a signature */
+        margin-left: auto; /* Align right */
+        margin-right: 10px; /* Small margin from right edge */
+        margin-bottom: 5px;
+        display: flex; /* To center text vertically */
+        align-items: center; /* To center text vertically */
+        justify-content: center; /* To center text horizontally (optional) */
+        font-size: 0.9em;
+        color: #777; /* Lighter color for placeholder-like text */
+        text-align: center;
+        line-height: 1.2;
+    }
+    /* NEW CSS for faint signature */
+    .faint-signature {
+        opacity: 0.2;
+        border: 1px solid rgba(51, 51, 51, 0.2); /* Make border faint as well */
+    }
+
+    #signatureLabel {
+        display: block;
+        margin-top: 5px;
+        font-size: 0.9em;
+        color: #555;
+    }
+
+    /* Loading bar styles */
+    #loadingOverlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.6);
+        display: none; /* Hidden by default */
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000; /* Above everything else */
+        color: white;
+        font-size: 1.2em;
+    }
+
+    #loadingBarContainer {
+        width: 300px;
+        background-color: #f3f3f3;
+        border-radius: 5px;
+        overflow: hidden;
+        margin-top: 20px;
+    }
+
+    #loadingBar {
+        width: 0%;
+        height: 20px;
+        background-color: #007bb5;
+        border-radius: 50%; /* Changed to rounded end */
+        text-align: center;
+        line-height: 20px;
+        color: white;
+        transition: width 0.3s ease-in-out; /* Smooth progress animation */
+    }
+
+    #loadingStatus {
+        margin-top: 10px;
+        font-weight: bold;
+    }
+
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+      body {
+        font-size: 1em;
+      }
+      .container {
+        padding: 25px;
+        margin: 20px auto;
+        width: 95%;
+      }
+      h1 {
+        font-size: 2.2em;
+        margin-bottom: 20px;
+      }
+      h2 {
+        font-size: 1.8em;
+        margin-bottom: 15px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 1em;
+      }
+      .chart-container {
+        height: 250px;
+        margin: 15px auto;
+      }
+      .chart-group h3 {
+        font-size: 1.6em;
+      }
+      /* Adjust form group max-width for smaller screens if needed */
+      .form-group, .duration-group {
+        max-width: 280px; /* Make form elements slightly narrower on smaller screens */
+      }
+    }
+
+    @media (max-width: 480px) {
+      .container {
+        padding: 15px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+      h2 {
+        font-size: 1.5em;
+      }
+      input, select {
+        padding: 10px;
+      }
+      .form-group, .duration-group {
+        max-width: 100%; /* Allow form elements to take full width on very small screens */
+        padding: 0 10px; /* Add some horizontal padding to prevent edge sticking */
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="splashScreen">
+    <img id="companyLogo" src="images/WhatsApp Image 2025-06-25 at 14.05.29_87a63888.jpg" alt="Company Logo">
+    <div class="spinner"></div>
+    <div class="spinalysis-text">
+      <span>S</span><span>P</span><span>I</span><span>N</span><span>A</span><span>L</span><span>Y</span><span>S</span><span>I</span><span>S</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <h1>SPINALYSIS SYSTEM</h1>
+
+    <section id="loginSection" class="section active">
+      <h2>DOCTOR LOGIN</h2>
+      <div id="loginMessage" class="message"></div>
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="username">USERNAME</label>
+          <input type="text" id="username" name="username" required autocomplete="username" tabindex="0">
+        </div>
+        <div class="form-group">
+          <label for="password">PASSWORD</label>
+          <input type="password" id="password" name="password" required autocomplete="current-password" tabindex="0">
+        </div>
+        <button type="submit">LOGIN</button>
+      </form>
+      <button id="showCreateAccount" class="secondary-btn">CREATE NEW ACCOUNT</button>
+    </section>
+
+    <section id="createAccountSection" class="section">
+      <h2>CREATE NEW DOCTOR ACCOUNT</h2>
+      <div id="createAccountMessage" class="message"></div>
+      <form id="createDoctorForm">
+        <div class="form-group">
+          <label for="newUsername">USERNAME</label>
+          <input type="text" id="newUsername" name="newUsername" required autocomplete="new-username" tabindex="0">
+        </div>
+        <div class="form-group">
+          <label for="newPassword">PASSWORD</label>
+          <input type="password" id="newPassword" name="newPassword" required autocomplete="new-password" tabindex="0">
+        </div>
+        <button type="submit">CREATE ACCOUNT</button>
+      </form>
+      <button id="backToLogin" class="secondary-btn">BACK TO LOGIN</button>
+    </section>
+
+    <section id="patientSection" class="section">
+      <h2>PATIENT MANAGEMENT</h2>
+      <div id="patientMessage" class="message"></div>
+      <div id="currentPatientDisplay">No patient selected.</div>
+
+      <h3>Existing Patients</h3>
+      <ul id="patientList">
+        </ul>
+      <button id="addPatientBtn">ADD NEW PATIENT</button>
+      <button id="logoutBtn" class="secondary-btn">LOGOUT</button>
+    </section>
+
+    <section id="addPatientSection" class="section">
+      <h2>ADD NEW PATIENT</h2>
+      <div id="addPatientMessage" class="message"></div>
+      <form id="createPatientForm">
+        <div class="form-group">
+          <label for="firstName">FIRST NAME</label>
+          <input type="text" id="firstName" name="firstName" required tabindex="0">
+        </div>
+        <div class="form-group">
+          <label for="middleName">MIDDLE NAME (OPTIONAL)</label>
+          <input type="text" id="middleName" name="middleName" tabindex="0">
+        </div>
+        <div class="form-group">
+          <label for="lastName">LAST NAME</label>
+          <input type="text" id="lastName" name="lastName" required tabindex="0">
+        </div>
+        <div class="form-group">
+          <label for="age">AGE</label>
+          <input type="number" id="age" name="age" required min="0" tabindex="0">
+        </div>
+        <div class="form-group">
+          <label for="hospitalNumber">HOSPITAL NUMBER</label>
+          <input type="text" id="hospitalNumber" name="hospitalNumber" required tabindex="0">
+        </div>
+        <button type="submit">CREATE PATIENT</button>
+      </form>
+      <button id="backToPatientList" class="secondary-btn">BACK TO PATIENT LIST</button>
+    </section>
+
+    <section id="testSection" class="section">
+      <h2>PREPARE WALK TEST</h2>
+      <div id="testMessage" class="message"></div>
+      <p id="currentPatientTestDisplay">Currently testing for: </p>
+      <form id="prepareTestForm">
+        <div class="form-group">
+          <label for="duration">DURATION</label>
+          <div class="duration-group">
+            <input type="number" id="duration" name="duration" value="10" min="1" autocomplete="off" required tabindex="0">
+            <select id="durationUnit" name="durationUnit" tabindex="0">
+              <option value="seconds">Seconds</option>
+              <option value="minutes">Minutes</option>
+            </select>
+          </div>
+        </div>
+        <button type="submit">SET DURATION</button>
+      </form>
+      <div id="timer">TIME: 0s / 0s</div>
+      <div id="sensorDataDisplay">
+    SENSOR DATA:
+    <span id="s1_value">S1: -</span>,
+    <span id="s2_value">S2: -</span>,
+    <span id="s3_value">S3: -</span>,
+    <span id="s4_value">S4: -</span>,
+    <span id="s5_value">S5: -</span>,
+    <span id="s6_value">S6: -</span>,
+    <span id="s7_value">S7: -</span>,
+    <span id="s8_value">S8: -</span>,
+    <span id="s9_value">S9: -</span>,
+    <span id="s10_value">S10: -</span>,
+    <span id="s11_value">S11: -</span>,
+    <span id="s12_value">S12: -</span>
+      </div>
+
+
+      <h3>SELECT WALK TYPE TO START TEST</h3>
+      <button id="startHeelWalk" class="walk-type-btn">START HEEL WALK</button>
+      <button id="startNormalWalk" class="walk-type-btn">START NORMAL WALK</button>
+      <button id="startForefeetWalk" class="walk-type-btn">START FOREFEET WALK</button>
+      <button id="stopTest" disabled>STOP TEST</button>
+      <button id="viewAnalysisBtn" disabled>VIEW ANALYSIS</button>
+      <button id="backFromTestToPatientList" class="secondary-btn">BACK TO PATIENT LIST</button>
+    </section>
+
+    <section id="analysisSection" class="section">
+      <h2>ANALYSIS RESULTS</h2>
+      <p id="analysisMessage" class="message"></p>
+      <p>Filtered Samples: <span id="filteredSamples">0</span></p>
+
+      <div class="chart-controls">
+        <button id="viewHeelWalkAnalysis">View Heel Walk</button>
+        <button id="viewNormalWalkAnalysis">View Normal Walk</button>
+        <button id="viewForefeetWalkAnalysis">View Forefeet Walk</button>
+      </div>
+
+      <div id="Heel_WalkCharts" class="chart-group">
+        <h3>Heel Walk Analysis</h3>
+        <div class="chart-container"><canvas id="Heel_WalkLeftChart"></canvas></div>
+        <div class="chart-container"><canvas id="Heel_WalkRightChart"></canvas></div>
+      </div>
+
+      <div id="Normal_WalkCharts" class="chart-group">
+        <h3>Normal Walk Analysis</h3>
+        <div class="chart-container"><canvas id="Normal_WalkLeftChart"></canvas></div>
+        <div class="chart-container"><canvas id="Normal_WalkRightChart"></canvas></div>
+      </div>
+
+      <div id="Forefeet_WalkCharts" class="chart-group">
+        <h3>Forefeet Walk Analysis</h3>
+        <div class="chart-container"><canvas id="Forefeet_WalkLeftChart"></canvas></div>
+        <div class="chart-container"><canvas id="Forefeet_WalkRightChart"></canvas></div>
+      </div>
+      <button id="generateReportBtn" disabled>GENERATE REPORT</button>
+      <button id="backToTestFromAnalysis" class="secondary-btn">BACK TO PATIENT LIST</button>
+    </section>
+
+    <section id="reportSection" class="section">
+        <h2>Patient Report Preview</h2>
+        <div id="reportContent">
+            <h1 style="text-align: center; color: #007bb5; font-size: 2.2em; margin-bottom: 20px;">SPINALYSIS SYSTEM - Walk Test Analysis Report</h1>
+            
+            <div style="margin-bottom: 20px;">
+                <p><strong>Patient Name:</strong> <span id="reportPatientName"></span></p>
+                <p><strong>Age:</strong> <span id="reportPatientAge"></span></p>
+                <p><strong>Hospital Number:</strong> <span id="reportPatientHospitalNumber"></span></p>
+                <p><strong>Date of Report:</strong> <span id="reportDate"></span></p>
+                <p><strong>Prepared By (Doctor):</strong> Dr. <span id="reportDoctorUsername"></span></p>
+            </div>
+            
+            <hr style="border: 0; height: 1px; background-color: #eee; margin: 20px 0;">
+            <div class="report-page-break">
+                <h3>4. Observations and Clinical Interpretation</h3>
+                <textarea id="reportObservations" style="width: 100%; height: 350px; border: 2px solid #007bb5; border-radius: 5px; padding: 10px; box-sizing: border-box;" readonly></textarea>
+
+                <h3>5. Recommendations/Further Steps</h3>
+                <textarea id="reportRecommendations" style="width: 100%; height: 350px; border: 2px solid #007bb5; border-radius: 5px; padding: 10px; box-sizing: border-box;" readonly></textarea>
+            </div>
+
+            <div id="signatureSection">
+                <div class="signature-box faint-signature">PHYSICIAN'S SIGNATURE</div>
+                <span id="signatureLabel">Doctor's Signature</span>
+                <p style="margin-top: 5px; font-size: 0.9em; color: #555;">Date: <span id="reportGenerationDate"></span></p>
+            </div>
+            
+        </div>
+        <button id="downloadPdfBtn">DOWNLOAD REPORT</button>
+        <button id="generateGraphReportBtn" class="px-6 py-3 bg-purple-600 text-white font-semibold rounded-lg shadow-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75 transition duration-300 ease-in-out" disabled>
+            GRAPH REPORT
+        </button>
+        <button id="backToAnalysisFromReport" class="secondary-btn">BACK TO ANALYSIS</button>
+    </section>
+
+  </div>
+
+  <div id="loadingOverlay">
+      <div class="spinner"></div>
+      <div id="loadingStatus">Preparing report...</div>
+      <div id="loadingBarContainer">
+          <div id="loadingBar"></div>
+      </div>
+  </div>
+
+
+</body>
+</html>
